@@ -133,33 +133,36 @@ func (s *StepPortForwarding) Run(ctx context.Context, state multistep.StateBag) 
 
 		// Create a forwarded port mapping to the VM
 		ui.Say(fmt.Sprintf("Creating forwarded port mapping for communicator (SSH, WinRM, etc) (host port %d)", commHostPort))
-		command = []string{
-			"modifyvm", vmName,
-			"--natpf1",
-			fmt.Sprintf("packercomm,tcp,127.0.0.1,%d,,%d", commHostPort, guestPort),
+
+		commands := [][]string{
+			{"modifyvm", vmName, "--natpf1", fmt.Sprintf("packercomm,tcp,127.0.0.1,%d,,%d", commHostPort, guestPort)},
+			{"modifyvm", vmName, "--natpf1", fmt.Sprintf("packercomm,tcp,0.0.0.0,%d,,%d", commHostPort, guestPort)},
 		}
-		retried := false
-	retry:
-		if err := driver.VBoxManage(command...); err != nil {
-			if !strings.Contains(err.Error(), "A NAT rule of this name already exists") || retried {
-				err := fmt.Errorf("Error creating port forwarding rule: %s", err)
-				state.Put("error", err)
-				ui.Error(err.Error())
-				return multistep.ActionHalt
-			} else {
-				log.Printf("A packer NAT rule already exists. Trying to delete ...")
-				delcommand := []string{
-					"modifyvm", vmName,
-					"--natpf1",
-					"delete", "packercomm",
-				}
-				if err := driver.VBoxManage(delcommand...); err != nil {
-					err := fmt.Errorf("Error deleting packer NAT forwarding rule: %s", err)
+
+		for _, command := range commands {
+			retried := false
+		retry:
+			if err := driver.VBoxManage(command...); err != nil {
+				if !strings.Contains(err.Error(), "A NAT rule of this name already exists") || retried {
+					err := fmt.Errorf("Error creating port forwarding rule: %s", err)
 					state.Put("error", err)
 					ui.Error(err.Error())
 					return multistep.ActionHalt
+				} else {
+					log.Printf("A packer NAT rule already exists. Trying to delete ...")
+					delcommand := []string{
+						"modifyvm", vmName,
+						"--natpf1",
+						"delete", "packercomm",
+					}
+					if err := driver.VBoxManage(delcommand...); err != nil {
+						err := fmt.Errorf("Error deleting packer NAT forwarding rule: %s", err)
+						state.Put("error", err)
+						ui.Error(err.Error())
+						return multistep.ActionHalt
+					}
+					goto retry
 				}
-				goto retry
 			}
 		}
 	}
